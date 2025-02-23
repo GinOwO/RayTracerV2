@@ -1,4 +1,4 @@
-# Refactoring the Project
+# Refactoring the RayTracer
 
 ### Introduction
 You have cloned the project, now what?
@@ -236,7 +236,7 @@ all the information OpenGL needs to draw this mesh, and they are:
 
 And there's the Mesh class implementation:
 ```c++
-#include <Project/Mesh.hpp>
+#include <RayTracer/Mesh.hpp>
 
 #include <glad/glad.h>
 
@@ -766,7 +766,7 @@ void Model::Draw(const Shader& shader) const
 
 ### CMake
 Finally, we have to let CMake know that we need to use more files and more dependencies.
-You want to add all these files in `Project/CMakeLists.txt`
+You want to add all these files in `RayTracer/CMakeLists.txt`
 ```cmake
     set(sourceFiles
         Shader.cpp
@@ -776,10 +776,10 @@ You want to add all these files in `Project/CMakeLists.txt`
         ProjectApplication.cpp
     )
     set(headerFiles
-        include/Project/ProjectApplication.hpp
-        include/Project/Shader.hpp
-        include/Project/Mesh.hpp
-        include/Project/Model.hpp
+        include/RayTracer/ProjectApplication.hpp
+        include/RayTracer/Shader.hpp
+        include/RayTracer/Mesh.hpp
+        include/RayTracer/Model.hpp
     )
 ```
 

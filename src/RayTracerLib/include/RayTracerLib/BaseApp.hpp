@@ -3,7 +3,7 @@
 
 struct GLFWwindow;
 
-class Application
+class BaseApp
 {
 public:
     void Run();

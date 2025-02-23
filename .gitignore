@@ -51,7 +51,7 @@ Generated\ Files/
 TestResult.xml
 nunit-*.xml
 
-# Build Results of an ATL Project
+# Build Results of an ATL RayTracer
 [Dd]ebugPS/
 [Rr]eleasePS/
 dlldata.c
@@ -259,15 +259,6 @@ ServiceFabricBackup/
 *.ldf
 *.ndf
 
-# Business Intelligence projects
-*.rdl.data
-*.bim.layout
-*.bim_*.settings
-*.rptproj.rsuser
-*- [Bb]ackup.rdl
-*- [Bb]ackup ([0-9]).rdl
-*- [Bb]ackup ([0-9][0-9]).rdl
-
 # Microsoft Fakes
 FakesAssemblies/
 
@@ -361,3 +352,5 @@ cmake-build-release/
 
 # Assets
 models/**
+.vscode/
+build/

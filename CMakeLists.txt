@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.14)
 
-project(Project)
+project(RayTracer)
 
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 23)
 
 option (FORCE_COLORED_OUTPUT "Always produce ANSI-colored output (GNU/Clang only)." TRUE)
 if (${FORCE_COLORED_OUTPUT})
@@ -14,5 +14,5 @@ if (${FORCE_COLORED_OUTPUT})
 endif ()
 
 add_subdirectory(lib)
-add_subdirectory(src/Project.Library)
-add_subdirectory(src/Project)
+add_subdirectory(src/RayTracerLib)
+add_subdirectory(src/RayTracer)
