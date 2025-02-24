@@ -1,13 +1,18 @@
 #include "Renderer.h"
 
 #include "Walnut/Random.h"
+#include "Walnut/Timer.h"
+
+#include <OpenImageDenoise/oidn.hpp>
 
 #include <glm/gtx/component_wise.hpp>
 
+#include <iostream>
 #include <numeric>
 #include <algorithm>
 #include <execution>
 #include <sstream>
+#include <glm/gtx/norm.hpp>
 
 namespace Utils 
 {
@@ -32,6 +37,8 @@ namespace Utils
 	}
 }
 
+static std::vector<int> pixels;;
+
 void Renderer::OnResize(uint32_t width, uint32_t height)
 {
 	if (m_FinalImage)
@@ -53,45 +60,83 @@ void Renderer::OnResize(uint32_t width, uint32_t height)
 	delete[] m_AccumulationData;
 	m_AccumulationData = new glm::vec4[width * height];
 
+	delete[] m_HistoryData;
+	m_HistoryData = new glm::vec4[width * height];
+
+	delete[] m_NormalData;
+	m_NormalData = new glm::vec3[width * height];
+
+	delete[] m_AlbedoData;
+	m_AlbedoData = new glm::vec3[width * height];
+
 	m_ImageVerticalIter.resize(height);
-	m_FrameIndex = 1;
+	m_Statistics.FrameIndex = 1;
 	std::iota(m_ImageVerticalIter.begin(), m_ImageVerticalIter.end(), 0);
+
+	pixels.resize(width * height);
+	std::iota(pixels.begin(), pixels.end(), 0);
 }
 
 void Renderer::Render(Scene& scene, const Camera& camera)
 {
 	m_ActiveScene = &scene;
 	m_ActiveCamera = &camera;
-	
-	if (m_FrameIndex == 1)
-		memset(m_AccumulationData, 0, m_FinalImage->GetWidth() * m_FinalImage->GetHeight() * sizeof(glm::vec4));
+	static bool denoised = false;
+	if (m_Statistics.FrameIndex >= m_Settings.MaxSamples && m_Settings.MaxSamples > 0) {
+		if (m_Settings.Denoise && !denoised) {
+			Walnut::Timer timer;
+			denoise();
+			denoised = true;
+			m_Statistics.DenoisingTime = timer.ElapsedMillis();
+		}
+		m_FinalImage->SetData(m_ImageData);
+		return;
+	}
+	denoised = false;
 
+	Walnut::Timer timer;
+	if (m_Settings.Accumulate)
+		m_Statistics.FrameIndex++;
+	else
+		m_Statistics.FrameIndex = 1;
+	
+	if (m_Statistics.FrameIndex == 1) {
+		memset(m_AccumulationData, 0, m_FinalImage->GetWidth() * m_FinalImage->GetHeight() * sizeof(glm::vec4));
+		memset(m_HistoryData, 0, m_FinalImage->GetWidth() * m_FinalImage->GetHeight() * sizeof(glm::vec4));
+		memset(m_AlbedoData, 0, m_FinalImage->GetWidth() * m_FinalImage->GetHeight() * sizeof(glm::vec3));
+		memset(m_NormalData, 0, m_FinalImage->GetWidth() * m_FinalImage->GetHeight() * sizeof(glm::vec3));
+	}
+
+	//for (uint32_t cnt = 0; cnt < m_Settings.MaxSamples; cnt++)
 	std::for_each(std::execution::par, m_ImageVerticalIter.begin(), m_ImageVerticalIter.end(),
 		[this](uint32_t y)
 		{
 			for (uint32_t x = 0; x < m_FinalImage->GetWidth(); x++)
 				{
-					glm::vec4 color = PerPixel(x, y);
+					glm::vec4 color = RayGen(x, y);
 					m_AccumulationData[x + y * m_FinalImage->GetWidth()] += color;
 
 					glm::vec4 accumulatedColor = m_AccumulationData[x + y * m_FinalImage->GetWidth()];
-					accumulatedColor /= (float)m_FrameIndex;
+					accumulatedColor /= (float)m_Statistics.FrameIndex;
 
 					accumulatedColor = glm::clamp(accumulatedColor, glm::vec4(0.0f), glm::vec4(1.0f));
 					m_ImageData[x + y * m_FinalImage->GetWidth()] = Utils::ConvertToRGBA(accumulatedColor);
 				};
 		});
 
-
 	m_FinalImage->SetData(m_ImageData);
-
-	if (m_Settings.Accumulate)
-		m_FrameIndex++;
-	else
-		m_FrameIndex = 1;
+	m_Statistics.LastRenderTime = timer.ElapsedMillis();
+	if (m_Statistics.FrameIndex == 1) {
+		m_Statistics.CumulativeTime = 0;
+		m_Statistics.AvgRenderTime = 0;
+		m_Statistics.AvgFps = 0;
+	}
+	m_Statistics.CumulativeTime += m_Statistics.LastRenderTime;
+	m_Statistics.AvgRenderTime = ((m_Statistics.AvgRenderTime * (m_Statistics.FrameIndex - 1)) + m_Statistics.LastRenderTime) / m_Statistics.FrameIndex;
+	m_Statistics.AvgFps = 1000.0f / m_Statistics.AvgRenderTime;
 }
 
-glm::vec4 Renderer::PerPixel(uint32_t x, uint32_t y)
+glm::vec4 Renderer::RayGen(uint32_t x, uint32_t y)
 {
 	Ray ray;
 	ray.Origin = m_ActiveCamera->GetPosition();
@@ -99,14 +144,13 @@ glm::vec4 Renderer::PerPixel(uint32_t x, uint32_t y)
 
 	glm::vec3 light(0.0f);
 	glm::vec3 contribution(1.0f);
-	int bounces = 2;
-	for (int i = 0; i < bounces; i++)
+	for (int i = 0; i < m_Settings.MaxBounces; i++)
 	{
 		Renderer::HitPayload payload = TraceRay(ray);
 		if (payload.HitDistance < 0.0f)
 		{
-			glm::vec3 skyColor = glm::vec3(0.6f, 0.7f, 0.9f);
-			light += contribution * skyColor;
+			if (m_Settings.Sky)
+				light += contribution * m_Settings.SkyColor;
 			break;
 		}
 
@@ -126,11 +170,13 @@ glm::vec4 Renderer::PerPixel(uint32_t x, uint32_t y)
 			const Cuboid& cuboid = m_ActiveScene->Cuboids[payload.ObjectIndex];
 			material = &m_ActiveScene->Materials[cuboid.MaterialIndex];
 		}
+		m_NormalData[x + y * m_FinalImage->GetWidth()] = glm::normalize(payload.WorldNormal);
+		m_AlbedoData[x + y * m_FinalImage->GetWidth()] = material->Albedo;
 
-		if (m_FrameIndex == -1)
+		if (m_Statistics.FrameIndex == -1)
 		{
 			memset(m_AccumulationData, 0, m_FinalImage->GetWidth() * m_FinalImage->GetHeight() * sizeof(glm::vec4));
-			m_FrameIndex = 1;
+			m_Statistics.FrameIndex = 1;
 		}
 
 		if (material->Metallic > 0.0f)
@@ -180,7 +226,6 @@ Renderer::HitPayload Renderer::TraceRay(const Ray& ray)
 		// Quadratic formula:
 		// (-b +- sqrt(discriminant)) / 2a
 
-		// float t0 = (-b + glm::sqrt(discriminant)) / (2.0f * a); // Second hit distance (currently unused)
 		float closestT = (-b - glm::sqrt(discriminant)) / (2.0f * a);
 		if (closestT > 0.0f && closestT < hitDistance)
 		{
@@ -276,22 +321,18 @@ Renderer::HitPayload Renderer::ClosestHit(const Ray& ray, float hitDistance, int
 	Renderer::HitPayload payload;
 	payload.HitDistance = hitDistance;
 	payload.ObjectIndex = objectIndex;
-	payload.ObjectType = HitPayload::ObjectType::Cuboid; // Make sure your enum includes Cuboid
+	payload.ObjectType = HitPayload::ObjectType::Cuboid;
 
 	const Cuboid& hitCuboid = m_ActiveScene->Cuboids[objectIndex];
 
-	// Compute the hit point in world space
 	glm::vec3 hitPoint = ray.Origin + ray.Direction * hitDistance;
 	payload.WorldPosition = hitPoint;
 
-	// Transform the hit point into the cuboid's local space
 	glm::quat invRot = glm::inverse(hitCuboid.Rotation);
 	glm::vec3 localPoint = invRot * (hitPoint - hitCuboid.Position);
 
-	// Cuboid defined as centered at origin with half dimensions
 	glm::vec3 halfDims = hitCuboid.Dimensions * 0.5f;
 
-	// Determine which face is hit by computing the difference from the face boundary
 	float diffX = fabs(fabs(localPoint.x) - halfDims.x);
 	float diffY = fabs(fabs(localPoint.y) - halfDims.y);
 	float diffZ = fabs(fabs(localPoint.z) - halfDims.z);
@@ -299,30 +340,237 @@ Renderer::HitPayload Renderer::ClosestHit(const Ray& ray, float hitDistance, int
 	glm::vec3 localNormal(0.0f);
 	if (diffX < diffY && diffX < diffZ)
 	{
-		// Hit on the X face
 		localNormal = glm::vec3((localPoint.x > 0.0f) ? 1.0f : -1.0f, 0.0f, 0.0f);
 	}
 	else if (diffY < diffZ)
 	{
-		// Hit on the Y face
 		localNormal = glm::vec3(0.0f, (localPoint.y > 0.0f) ? 1.0f : -1.0f, 0.0f);
 	}
 	else
 	{
-		// Hit on the Z face
 		localNormal = glm::vec3(0.0f, 0.0f, (localPoint.z > 0.0f) ? 1.0f : -1.0f);
 	}
 
-	// Transform the normal back to world space using the cuboid's rotation
 	payload.WorldNormal = glm::normalize(hitCuboid.Rotation * localNormal);
 
 	return payload;
 }
-
 
 Renderer::HitPayload Renderer::Miss(const Ray& ray)
 {
 	Renderer::HitPayload payload;
 	payload.HitDistance = -1.0f;
 	return payload;
+}
+
+
+static void BilateralFilter(uint32_t width, uint32_t height, glm::vec4* accumulationData)
+{
+	std::vector<glm::vec4> temp(width * height);
+
+	const float spatialSigma = 3.0f;
+	const float colorSigma = 0.1f;
+	int radius = static_cast<int>(std::ceil(2 * spatialSigma));
+
+	for (uint32_t y = 0; y < height; ++y)
+	{
+		for (uint32_t x = 0; x < width; ++x)
+		{
+			int index = y * width + x;
+			glm::vec4 centerColor = accumulationData[index];
+			glm::vec4 sumColor(0.0f);
+			float sumWeight = 0.0f;
+
+			for (int j = -radius; j <= radius; ++j)
+			{
+				for (int i = -radius; i <= radius; ++i)
+				{
+					int sampleX = x + i;
+					int sampleY = y + j;
+
+					if (sampleX < 0 || sampleX >= static_cast<int>(width) ||
+						sampleY < 0 || sampleY >= static_cast<int>(height))
+						continue;
+
+					int sampleIndex = sampleY * width + sampleX;
+					glm::vec4 sampleColor = accumulationData[sampleIndex];
+
+					float spatialDist2 = static_cast<float>(i * i + j * j);
+					float spatialWeight = std::exp(-spatialDist2 / (2.0f * spatialSigma * spatialSigma));
+
+					glm::vec4 diff = sampleColor - centerColor;
+					float colorDist2 = glm::dot(diff, diff);
+					float colorWeight = std::exp(-colorDist2 / (2.0f * colorSigma * colorSigma));
+
+					float weight = spatialWeight * colorWeight;;
+					sumColor += sampleColor * weight;
+					sumWeight += weight;
+				}
+			}
+			temp[index] = sumColor / sumWeight;
+		}
+	}
+	std::memcpy(accumulationData, temp.data(), width * height * sizeof(glm::vec4));
+}
+
+static void GaussianBlurFilter(uint32_t width, uint32_t height, glm::vec4* accumulationData)
+{
+	std::vector<glm::vec4> horizontal(width * height);
+	std::vector<glm::vec4> temp(width * height);
+
+	const float sigma = 1.0f;
+	int radius = static_cast<int>(std::ceil(3 * sigma));
+
+	std::vector<float> kernel(2 * radius + 1);
+	float kernelSum = 0.0f;
+	for (int i = -radius; i <= radius; ++i)
+	{
+		float value = std::exp(-(i * i) / (2.0f * sigma * sigma));
+		kernel[i + radius] = value;
+		kernelSum += value;
+	}
+
+	for (float& v : kernel)
+		v /= kernelSum;
+
+	for (uint32_t y = 0; y < height; ++y)
+	{
+		for (uint32_t x = 0; x < width; ++x)
+		{
+			glm::vec4 sum(0.0f);
+			float weightSum = 0.0f;
+			for (int i = -radius; i <= radius; ++i)
+			{
+				int sampleX = x + i;
+				if (sampleX < 0 || sampleX >= static_cast<int>(width))
+					continue;
+				float weight = kernel[i + radius];
+				sum += accumulationData[y * width + sampleX] * weight;
+				weightSum += weight;
+			}
+			horizontal[y * width + x] = sum / weightSum;
+		}
+	}
+
+	for (uint32_t y = 0; y < height; ++y)
+	{
+		for (uint32_t x = 0; x < width; ++x)
+		{
+			glm::vec4 sum(0.0f);
+			float weightSum = 0.0f;
+			for (int j = -radius; j <= radius; ++j)
+			{
+				int sampleY = y + j;
+				if (sampleY < 0 || sampleY >= static_cast<int>(height))
+					continue;
+				float weight = kernel[j + radius];
+				sum += horizontal[sampleY * width + x] * weight;
+				weightSum += weight;
+			}
+			temp[y * width + x] = sum / weightSum;
+		}
+	}
+
+	std::memcpy(accumulationData, temp.data(), width * height * sizeof(glm::vec4));
+}
+
+void Renderer::OIDNDenoise()
+{
+	uint32_t width = m_FinalImage->GetWidth();
+	uint32_t height = m_FinalImage->GetHeight();
+
+	oidn::DeviceRef device = oidn::newDevice();
+	device.commit();
+
+	// Prepare buffers for color
+	size_t bufferSize = width * height * 3 * sizeof(float);
+	oidn::BufferRef colorBuffer = device.newBuffer(bufferSize);
+	oidn::BufferRef outputBuffer = device.newBuffer(bufferSize);
+	float* colorData = static_cast<float*>(colorBuffer.getData());
+	float* outputData = static_cast<float*>(outputBuffer.getData());
+
+	// Prepare buffers for normal and albedo layers
+	oidn::BufferRef normalBuffer = device.newBuffer(bufferSize);
+	oidn::BufferRef albedoBuffer = device.newBuffer(bufferSize);
+	float* normalData = static_cast<float*>(normalBuffer.getData());
+	float* albedoData = static_cast<float*>(albedoBuffer.getData());
+
+	// Copy color data (as before)
+	std::for_each(pixels.begin(), pixels.end(), [&](int i)
+		{
+			colorData[i * 3 + 0] = m_AccumulationData[i].r;
+			colorData[i * 3 + 1] = m_AccumulationData[i].g;
+			colorData[i * 3 + 2] = m_AccumulationData[i].b;
+		});
+
+	// Copy normal data.
+	// Note: OIDN expects normals to be normalized. Typically, you can use the raw normal,
+	// or you may remap them from [-1,1] to [0,1] if needed by your pipeline.
+	std::for_each(pixels.begin(), pixels.end(), [&](int i)
+		{
+			// Assuming m_NormalData is glm::vec3; if stored as glm::vec3, no alpha.
+			normalData[i * 3 + 0] = m_NormalData[i].x;
+			normalData[i * 3 + 1] = m_NormalData[i].y;
+			normalData[i * 3 + 2] = m_NormalData[i].z;
+		});
+
+	// Copy albedo data.
+	std::for_each(pixels.begin(), pixels.end(), [&](int i)
+		{
+			albedoData[i * 3 + 0] = m_AlbedoData[i].r;
+			albedoData[i * 3 + 1] = m_AlbedoData[i].g;
+			albedoData[i * 3 + 2] = m_AlbedoData[i].b;
+		});
+
+	// Create and configure the OIDN filter.
+	oidn::FilterRef filter = device.newFilter("RT");
+	filter.setImage("color", colorData, oidn::Format::Float3, width, height);
+	filter.setImage("normal", normalData, oidn::Format::Float3, width, height);
+	filter.setImage("albedo", albedoData, oidn::Format::Float3, width, height);
+	filter.setImage("output", outputData, oidn::Format::Float3, width, height);
+
+	// Set additional filter parameters if necessary (for example, HDR flag)
+	filter.set("hdr", false);
+	filter.commit();
+
+	filter.execute();
+
+	// Check for errors
+	const char* errorMessage;
+	if (device.getError(errorMessage) != oidn::Error::None)
+	{
+		std::cerr << "OIDN Error: " << errorMessage << std::endl;
+		return;
+	}
+
+	// Update the accumulation data with the denoised output.
+	std::for_each(pixels.begin(), pixels.end(), [&](int i)
+		{
+			m_AccumulationData[i].r = outputData[i * 3 + 0];
+			m_AccumulationData[i].g = outputData[i * 3 + 1];
+			m_AccumulationData[i].b = outputData[i * 3 + 2];
+
+			glm::vec4 clampedColor = glm::clamp(m_AccumulationData[i], glm::vec4(0.0f), glm::vec4(1.0f));
+			m_ImageData[i] = Utils::ConvertToRGBA(clampedColor);
+		});
+}
+
+void Renderer::denoise() {
+	//return;
+	if (m_Settings.OIDN) {
+		OIDNDenoise();
+		return;
+	}
+
+	uint32_t width = m_FinalImage->GetWidth();
+	uint32_t height = m_FinalImage->GetHeight();
+
+	BilateralFilter(width, height, m_AccumulationData);
+	GaussianBlurFilter(width, height, m_AccumulationData);
+
+	std::for_each(std::execution::seq, pixels.begin(), pixels.end(),
+		[this](int i) {
+			glm::vec4 clampedColor = glm::clamp(m_AccumulationData[i], glm::vec4(0.0f), glm::vec4(1.0f));
+			m_ImageData[i] = Utils::ConvertToRGBA(clampedColor);
+		});
 }

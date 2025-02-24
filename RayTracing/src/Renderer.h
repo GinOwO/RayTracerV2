@@ -20,9 +20,11 @@ private:
 	const Camera* m_ActiveCamera = nullptr;
 
 	uint32_t* m_ImageData = nullptr;
+	glm::vec4* m_HistoryData = nullptr;
 	glm::vec4* m_AccumulationData = nullptr;
+	glm::vec3* m_NormalData = nullptr;
+	glm::vec3* m_AlbedoData = nullptr;
 
-	uint32_t m_FrameIndex = 1;
 private:
 	struct Settings
 	{
@@ -30,7 +32,21 @@ private:
 		int MaxBounces = 2;
 		bool Accumulate = true;
 		bool Denoise = false;
+		bool Sky = false;
+		bool OIDN = false;
+		glm::vec3 SkyColor{ 0x87 / 255.0f, 0xce / 255.0f, 0xeb / 255.0f };
+		glm::vec3 AmbientLight{ 0.1f };
 	} m_Settings;
+
+	struct Statistics
+	{
+		float AvgFps = 0.0f;
+		float AvgRenderTime = 0.0f;
+		float LastRenderTime = 0.0f;
+		float DenoisingTime = 0.0f;
+		float CumulativeTime = 0.0f;
+		int FrameIndex = 0;
+	} m_Statistics;
 
 	struct HitPayload
 	{
@@ -48,13 +64,16 @@ private:
 		} ObjectType;
 	};
 
-	glm::vec4 PerPixel(uint32_t x, uint32_t y); // RayGen
+	glm::vec4 RayGen(uint32_t x, uint32_t y);
 
 	HitPayload TraceRay(const Ray& ray);
 	HitPayload ClosestHit(const Ray& ray, float hitDistance, int objectIndex, const Sphere* sphere);
 	HitPayload ClosestHit(const Ray& ray, float hitDistance, int objectIndex, const Plane* plane);
 	HitPayload ClosestHit(const Ray& ray, float hitDistance, int objectIndex, const Cuboid* cuboid);
 	HitPayload Miss(const Ray& ray);
+
+	void denoise();
+	void OIDNDenoise();
 public:
 	Renderer() = default;
 
@@ -63,6 +82,7 @@ public:
 
 	std::shared_ptr<Walnut::Image> GetFinalImage() const { return m_FinalImage; }
 
-	void ResetFrameIndex() { m_FrameIndex = 1; }
+	void ResetFrameIndex() { m_Statistics.FrameIndex = 0; }
 	Settings& GetSettings() { return m_Settings; }
+	const Statistics& GetStatistics() const { return m_Statistics; }
 };
