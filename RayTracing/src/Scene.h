@@ -1,6 +1,7 @@
 #pragma once
 
 #include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 #include <vector>
 
@@ -17,14 +18,30 @@ struct Material
 
 struct Sphere
 {
-	glm::vec3 Position{0.0f};
+	glm::vec3 Position{ 0.0f };
 	float Radius = 0.5f;
-
 	int MaterialIndex = 0;
 };
+
+struct Plane
+{
+	glm::vec3 Position{ 0.0f };
+	glm::vec3 Normal{ 0.0f, 1.0f, 0.0f };
+	int MaterialIndex = 0;
+};
+
+struct Cuboid
+{
+	glm::vec3 Position{ 0.0f };
+	glm::vec3 Dimensions{ 1.0f, 1.0f, 1.0f };
+	glm::quat Rotation{ 1, 0, 0, 0 };
+	int MaterialIndex = 0;
+};;
 
 struct Scene
 {
 	std::vector<Sphere> Spheres;
+	std::vector<Plane> Planes;
+	std::vector<Cuboid> Cuboids;
 	std::vector<Material> Materials;
 };
