@@ -11,10 +11,24 @@
 
 class Renderer
 {
+public:
+	struct FilterSettings
+	{
+		float GaussianSigma = 1.5f;
+		float BilateralSpatialSigma = 2.5f;
+		float BilateralGuideSigma = 0.1f;
+		float UnsharpAmount = 0.4f;
+		float UnsharpBlurSigma = 0.8f;
+		int WaveletPasses = 3;
+		bool GaussianFilter = false;
+		bool JointBilateralFilter = false;
+		bool UnsharpMask = false;
+		bool WaveletFilter = false;
+		bool DNNFilter = false;
+		bool OIDN = false;
+	};
 private:
 	std::shared_ptr<Walnut::Image> m_FinalImage;
-
-	std::vector<uint32_t> m_ImageVerticalIter;
 
 	Scene* m_ActiveScene = nullptr;
 	const Camera* m_ActiveCamera = nullptr;
@@ -33,7 +47,6 @@ private:
 		bool Accumulate = true;
 		bool Denoise = false;
 		bool Sky = false;
-		bool OIDN = false;
 		glm::vec3 SkyColor{ 0x87 / 255.0f, 0xce / 255.0f, 0xeb / 255.0f };
 		glm::vec3 AmbientLight{ 0.1f };
 	} m_Settings;
@@ -74,8 +87,9 @@ private:
 
 	void denoise();
 	void OIDNDenoise();
+	FilterSettings m_FilterSettings;
 public:
-	Renderer() = default;
+	Renderer();
 
 	void OnResize(uint32_t width, uint32_t height);
 	void Render(Scene& scene, const Camera& camera);
@@ -84,5 +98,6 @@ public:
 
 	void ResetFrameIndex() { m_Statistics.FrameIndex = 0; }
 	Settings& GetSettings() { return m_Settings; }
+	FilterSettings& GetFilterSettings() { return m_FilterSettings; }
 	const Statistics& GetStatistics() const { return m_Statistics; }
 };

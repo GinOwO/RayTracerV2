@@ -109,7 +109,6 @@ public:
 		}
 		CheckChange(ImGui::Checkbox("Accumulate", &m_Renderer.GetSettings().Accumulate));
 		CheckChange(ImGui::Checkbox("Denoise", &m_Renderer.GetSettings().Denoise));
-		CheckChange(ImGui::Checkbox("OIDN", &m_Renderer.GetSettings().OIDN));
 		CheckChange(ImGui::Checkbox("Sky", &m_Renderer.GetSettings().Sky));
 		CheckChange(ImGui::ColorEdit3("Sky Color", glm::value_ptr(m_Renderer.GetSettings().SkyColor)));
 		CheckChange(ImGui::DragInt("Max Samples", &m_Renderer.GetSettings().MaxSamples, 1.0f, 1, 128));
@@ -117,6 +116,22 @@ public:
 
 		if (ImGui::Button("Reset"))
 			m_Renderer.ResetFrameIndex();
+		ImGui::End();
+
+		ImGui::Begin("Filter Settings");
+		static auto& filterSettings = m_Renderer.GetFilterSettings();
+		CheckChange(ImGui::Checkbox("OIDN", &filterSettings.OIDN));
+		CheckChange(ImGui::Checkbox("Gaussian Filter", &filterSettings.GaussianFilter));
+		CheckChange(ImGui::Checkbox("WaveletFilter", &filterSettings.WaveletFilter));
+		CheckChange(ImGui::Checkbox("Bilateral Filter", &filterSettings.JointBilateralFilter));
+		CheckChange(ImGui::Checkbox("Unsharp Mask", &filterSettings.UnsharpMask));
+		//CheckChange(ImGui::Checkbox("DNN Filter", &filterSettings.DNNFilter));
+		CheckChange(ImGui::DragFloat("Gaussian Sigma", &filterSettings.GaussianSigma, 0.01f, 0.0f, 10.0f));
+		CheckChange(ImGui::DragFloat("Bilateral Spatial Sigma", &filterSettings.BilateralSpatialSigma, 0.01f, 0.0f, 10.0f));
+		CheckChange(ImGui::DragFloat("Bilateral Guide Sigma", &filterSettings.BilateralGuideSigma, 0.01f, 0.0f, 10.0f));
+		CheckChange(ImGui::DragInt("Wavelet Passes", &filterSettings.WaveletPasses, 1, 1, 10));
+		CheckChange(ImGui::DragFloat("Unsharp Amount", &filterSettings.UnsharpAmount, 0.01f, 0.0f, 10.0f));
+		CheckChange(ImGui::DragFloat("Unsharp Blur Sigma", &filterSettings.UnsharpBlurSigma, 0.01f, 0.0f, 10.0f));
 		ImGui::End();
 
 		ImGui::Begin("Scene");
